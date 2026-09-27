@@ -9,8 +9,10 @@ const mergePlayers = soundFiles.map(file => { const audio = new Audio(file); aud
 const endPlayer = new Audio('./assets/end.mp3');
 endPlayer.preload = 'auto';
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const SLIDE_MS = 140, POP_MS = 180;
 let state, busy = false, lastMergePlayer = null, endShown = false;
 let pendingDirection = null, turnId = 0;
+let activeAnimations = [];
 
 function safeNumber(value) { return Number.isSafeInteger(value) && value >= 0 ? value : 0; }
 function load() {
@@ -40,16 +42,20 @@ function metrics() {
   const gap = parseFloat(getComputedStyle($('.board-background')).paddingLeft) || 9;
   return { gap, size: (boardEl.clientWidth - 5 * gap) / 4 };
 }
-function setPosition(node, index, { gap, size }) {
-  node.style.setProperty('--x', `${gap + index % 4 * (size + gap)}px`);
-  node.style.setProperty('--y', `${gap + Math.floor(index / 4) * (size + gap)}px`);
+function position(index, { gap, size }) {
+  return { x: gap + index % 4 * (size + gap), y: gap + Math.floor(index / 4) * (size + gap) };
+}
+function setPosition(node, index, layout) {
+  const { x, y } = position(index, layout);
+  node.style.setProperty('--x', `${x}px`);
+  node.style.setProperty('--y', `${y}px`);
 }
 function tile(value, index, layout, animation = '') {
   const node = document.createElement('div');
   node.className = `tile ${animation}`;
   node.dataset.value = value;
   node.dataset.digits = String(value).length;
-  node.innerHTML = `<strong>${value}</strong>`;
+  node.innerHTML = `<span class="tile-face"><strong>${value}</strong></span>`;
   setPosition(node, index, layout);
   return node;
 }
@@ -86,7 +92,19 @@ function showEnd(won, sound) {
   status.textContent = won ? '恭喜你合成了大奶蛋' : '游戏结束，再来一局';
   if (won && sound) playEnd();
 }
-function doMove(direction) {
+function frames(scaleAt) {
+  return Array.from({ length: 13 }, (_, i) => ({ offset: i / 12, scale: String(scaleAt(i / 12)) }));
+}
+function popProgress(p) { return .5 - .5 * Math.cos(p * Math.PI); }
+async function runAnimations(animations, currentTurn) {
+  activeAnimations = animations;
+  await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+  if (currentTurn !== turnId) return false;
+  animations.forEach(animation => animation.cancel());
+  activeAnimations = [];
+  return true;
+}
+async function doMove(direction) {
   if (restartDialog.open || endDialog.open || state.board.includes(LIMIT) || isLost(state.board)) {
     pendingDirection = null;
     return;
@@ -100,46 +118,59 @@ function doMove(direction) {
   const layout = metrics();
   const moving = turn.paths.map(path => tile(path.value, path.from, layout, 'moving'));
   tilesEl.replaceChildren(...moving);
-  const finishSlide = () => {
-    if (currentTurn !== turnId) return;
-    state.board = turn.board;
-    state.score += turn.gained;
-    state.best = Math.max(state.best, state.score);
-    if (turn.gained > 0) {
-      const fly = $('#score-fly'); fly.textContent = `+${turn.gained}`;
-      fly.classList.remove('fly'); void fly.offsetWidth; fly.classList.add('fly');
-    }
-    let spawned = -1;
-    const won = state.board.includes(LIMIT);
-    if (!won) {
-      const result = spawn(state.board);
-      state.board = result.board;
-      spawned = result.index;
-    }
-    save();
-    render({ merged: turn.merged, spawned });
-    const lost = isLost(state.board);
-    if (won || lost) pendingDirection = null;
-    status.textContent = turn.gained ? `合成得分 ${turn.gained}，当前得分 ${state.score}` : `当前得分 ${state.score}`;
-    window.setTimeout(() => {
-      if (currentTurn !== turnId) return;
-      busy = false;
-      if (won || lost) showEnd(won, won);
-      else if (pendingDirection) {
-        const next = pendingDirection;
-        pendingDirection = null;
-        doMove(next);
-      }
-    }, reduceMotion.matches ? 0 : 180);
-  };
-  if (reduceMotion.matches) { finishSlide(); return; }
-  moving[0].getBoundingClientRect();
-  turn.paths.forEach((path, i) => setPosition(moving[i], path.to, layout));
-  window.setTimeout(finishSlide, 140);
+  if (!reduceMotion.matches) {
+    const slides = turn.paths.map((path, i) => {
+      const from = position(path.from, layout), to = position(path.to, layout);
+      const keyframes = Array.from({ length: 13 }, (_, n) => {
+        const p = n / 12, eased = 1 - (1 - p) ** 2;
+        return { offset: p, transform: `translate(${from.x + (to.x - from.x) * eased}px, ${from.y + (to.y - from.y) * eased}px)` };
+      });
+      return moving[i].animate(keyframes, { duration: SLIDE_MS, easing: 'linear', fill: 'forwards' });
+    });
+    if (!await runAnimations(slides, currentTurn)) return;
+  }
+  state.board = turn.board;
+  state.score += turn.gained;
+  state.best = Math.max(state.best, state.score);
+  if (turn.gained > 0) {
+    const fly = $('#score-fly'); fly.textContent = `+${turn.gained}`;
+    fly.classList.remove('fly'); void fly.offsetWidth; fly.classList.add('fly');
+  }
+  let spawned = -1;
+  const won = state.board.includes(LIMIT);
+  if (!won) {
+    const result = spawn(state.board);
+    state.board = result.board;
+    spawned = result.index;
+  }
+  save();
+  render({ merged: turn.merged, spawned });
+  const lost = isLost(state.board);
+  if (won || lost) pendingDirection = null;
+  status.textContent = turn.gained ? `合成得分 ${turn.gained}，当前得分 ${state.score}` : `当前得分 ${state.score}`;
+  if (!reduceMotion.matches) {
+    const pop = [...tilesEl.querySelectorAll('.pop .tile-face')].map(node => node.animate(
+      frames(p => 1 + .13 * Math.sin(popProgress(p) * Math.PI)),
+      { duration: POP_MS, easing: 'linear', fill: 'forwards' }
+    ));
+    const appear = [...tilesEl.querySelectorAll('.new .tile-face')].map(node => node.animate(
+      frames(p => .45 + .55 * popProgress(p)),
+      { duration: POP_MS, easing: 'linear', fill: 'forwards' }
+    ));
+    if (!await runAnimations([...pop, ...appear], currentTurn)) return;
+  }
+  busy = false;
+  if (won || lost) showEnd(won, won);
+  else if (pendingDirection) {
+    const next = pendingDirection;
+    pendingDirection = null;
+    doMove(next);
+  }
 }
 function reset() {
   stopAudio();
   turnId++; pendingDirection = null;
+  activeAnimations.forEach(animation => animation.cancel()); activeAnimations = [];
   restartDialog.close(); endDialog.close(); endShown = false; busy = false;
   state.board = newGame(); state.score = 0;
   save(); render(); boardEl.focus(); status.textContent = '新的一局开始了';
