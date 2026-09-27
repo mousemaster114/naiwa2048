@@ -75,6 +75,7 @@ class MainActivity : Activity() {
         val result=game.move(direction)
         if(!result.changed)return
         save()
+        if(result.gained>0)audio.merge()
         board.animateTurn(result,{
             updateScores()
             if(result.gained>0) {
@@ -91,7 +92,6 @@ class MainActivity : Activity() {
                 if(next!=null)moveDirection(next)
             }
         })
-        if(result.gained>0)audio.merge()
     }
     private fun updateScores() { bestScore=maxOf(bestScore,game.score); score.text=game.score.toString(); best.text=bestScore.toString() }
     private fun save() { bestScore=maxOf(bestScore,game.score); prefs.edit().putString("cells",game.cells.joinToString(",")).putInt("score",game.score).putInt("best",bestScore).putBoolean("sound",audio.enabled).apply() }
