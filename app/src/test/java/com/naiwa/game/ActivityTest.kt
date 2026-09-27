@@ -72,8 +72,25 @@ class ActivityTest {
         val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
         val board=descendants(controller.get().window.decorView).filterIsInstance<BoardView>().single()
         board.onMove(Direction.LEFT)
+        assertEquals(1,plays)
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
         assertEquals(1,plays)
+        controller.pause().stop().destroy()
+    }
+    @Test fun lastSwipeDuringAnimationRunsAfterCurrentTurn() {
+        seed(2,2)
+        val controller=Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity=controller.get()
+        val board=descendants(activity.window.decorView).filterIsInstance<BoardView>().single()
+        val gameField=MainActivity::class.java.getDeclaredField("game").apply { isAccessible=true }
+        val game=gameField.get(activity) as Game
+        board.onMove(Direction.LEFT)
+        val afterFirst=game.cells.copyOf()
+        board.onMove(Direction.UP)
+        board.onMove(Direction.RIGHT)
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertFalse(afterFirst.contentEquals(game.cells))
+        assertFalse(board.busy)
         controller.pause().stop().destroy()
     }
     @Test fun smallScreenBoardStaysSquare() {

@@ -23,6 +23,7 @@ class MainActivity : Activity() {
     private var terminalShown=false
     private var foreground=false
     private var endDialog: Dialog?=null
+    private var pendingDirection: Direction?=null
     private val brown=Color.rgb(86,55,25)
     private fun dp(n: Int)=(n*resources.displayMetrics.density).toInt()
     private fun shape(color: Int, radius: Float=20f)=GradientDrawable().apply { setColor(color); cornerRadius=dp(radius.toInt()).toFloat() }
@@ -63,23 +64,38 @@ class MainActivity : Activity() {
         sound.setOnClickListener { audio.enabled=!audio.enabled; if(!audio.enabled)audio.stop(); sound.text=if(audio.enabled)"声音 · 开" else "声音 · 关"; save() }
         controls.addView(sound,LinearLayout.LayoutParams(0,dp(52),1f).apply { marginEnd=dp(10) })
         controls.addView(button("重新开始") { AlertDialog.Builder(this).setTitle("重新开始？").setMessage("当前这局的进度将清空，最高纪录会保留。").setNegativeButton("继续玩",null).setPositiveButton("重新开始") { _,_->reset() }.show() },LinearLayout.LayoutParams(0,dp(52),1f))
-        root.addView(controls); updateScores()
-        board.onMove={ direction ->
-            if(!game.won && !game.lost) {
-                val result=game.move(direction)
-                if(result.changed) {
-                    save()
-                    board.animateTurn(result,{
-                        updateScores()
-                        if(result.gained>0) { if(foreground)audio.merge(); gain.text="+${result.gained}  太棒啦！"; gain.translationY=dp(8).toFloat(); gain.animate().translationY(0f).setDuration(220).start() }
-                    },{ gain.text="目标 · 2048"; showTerminal(true) })
-                }
+        root.addView(controls)
+        root.addView(label("创意：hzr\n制作：ytw",11f),LinearLayout.LayoutParams(-1,dp(38)))
+        updateScores()
+        board.onMove={ direction -> moveDirection(direction) }
+    }
+    private fun moveDirection(direction: Direction) {
+        if(!foreground || game.won || game.lost) { pendingDirection=null; return }
+        if(board.busy) { pendingDirection=direction; return }
+        val result=game.move(direction)
+        if(!result.changed)return
+        save()
+        board.animateTurn(result,{
+            updateScores()
+            if(result.gained>0) {
+                gain.text="+${result.gained}  太棒啦！"
+                gain.translationY=dp(8).toFloat()
+                gain.animate().translationY(0f).setDuration(220).start()
             }
-        }
+        },{
+            gain.text="目标 · 2048"
+            if(game.won || game.lost) { pendingDirection=null; showTerminal(true) }
+            else {
+                val next=pendingDirection
+                pendingDirection=null
+                if(next!=null)moveDirection(next)
+            }
+        })
+        if(result.gained>0)audio.merge()
     }
     private fun updateScores() { bestScore=maxOf(bestScore,game.score); score.text=game.score.toString(); best.text=bestScore.toString() }
     private fun save() { bestScore=maxOf(bestScore,game.score); prefs.edit().putString("cells",game.cells.joinToString(",")).putInt("score",game.score).putInt("best",bestScore).putBoolean("sound",audio.enabled).apply() }
-    private fun reset() { board.finishAnimation(); audio.stop(); endDialog?.dismiss(); endDialog=null; terminalShown=false; game.reset(); gain.text="目标 · 2048"; updateScores(); board.invalidate(); save() }
+    private fun reset() { pendingDirection=null; board.finishAnimation(); audio.stop(); endDialog?.dismiss(); endDialog=null; terminalShown=false; game.reset(); gain.text="目标 · 2048"; updateScores(); board.invalidate(); save() }
     private fun showTerminal(playSound: Boolean) {
         if(!foreground || terminalShown || (!game.won && !game.lost))return
         terminalShown=true
@@ -100,6 +116,6 @@ class MainActivity : Activity() {
         if(won && playSound)audio.win()
     }
     override fun onResume() { super.onResume(); foreground=true; updateScores(); gain.text="目标 · 2048"; board.post { showTerminal(false) } }
-    override fun onPause() { foreground=false; board.finishAnimation(); audio.stop(); save(); super.onPause() }
+    override fun onPause() { foreground=false; pendingDirection=null; board.finishAnimation(); audio.stop(); save(); super.onPause() }
     override fun onDestroy() { endDialog?.dismiss(); audio.stop(); super.onDestroy() }
 }

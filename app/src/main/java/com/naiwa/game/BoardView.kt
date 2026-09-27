@@ -84,7 +84,7 @@ class BoardView(context: Context, private val game: Game) : View(context) {
             MotionEvent.ACTION_DOWN -> { downX=e.x; downY=e.y; return true }
             MotionEvent.ACTION_UP -> {
                 val dx=e.x-downX; val dy=e.y-downY
-                if(!busy && max(abs(dx),abs(dy))>24*resources.displayMetrics.density) onMove(if(abs(dx)>abs(dy)) { if(dx>0) Direction.RIGHT else Direction.LEFT } else { if(dy>0) Direction.DOWN else Direction.UP })
+                if(max(abs(dx),abs(dy))>24*resources.displayMetrics.density) onMove(if(abs(dx)>abs(dy)) { if(dx>0) Direction.RIGHT else Direction.LEFT } else { if(dy>0) Direction.DOWN else Direction.UP })
                 performClick(); return true
             }
             MotionEvent.ACTION_CANCEL -> return true

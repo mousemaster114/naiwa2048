@@ -3,7 +3,7 @@ android {
     namespace = "com.naiwa.game"
     compileSdk = 34
     buildToolsVersion = "36.1.0"
-    defaultConfig { applicationId = "com.naiwa.game"; minSdk = 26; targetSdk = 34; versionCode = 1; versionName = "1.0" }
+    defaultConfig { applicationId = "com.naiwa.game"; minSdk = 26; targetSdk = 34; versionCode = 2; versionName = "1.1" }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     testOptions { unitTests.isIncludeAndroidResources = true }
 }

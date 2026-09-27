@@ -10,6 +10,7 @@ const endPlayer = new Audio('./assets/end.mp3');
 endPlayer.preload = 'auto';
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let state, busy = false, lastMergePlayer = null, endShown = false;
+let pendingDirection = null, turnId = 0;
 
 function safeNumber(value) { return Number.isSafeInteger(value) && value >= 0 ? value : 0; }
 function load() {
@@ -39,26 +40,29 @@ function metrics() {
   const gap = parseFloat(getComputedStyle($('.board-background')).paddingLeft) || 9;
   return { gap, size: (boardEl.clientWidth - 5 * gap) / 4 };
 }
-function setPosition(node, index) {
-  const { gap, size } = metrics();
+function setPosition(node, index, { gap, size }) {
   node.style.setProperty('--x', `${gap + index % 4 * (size + gap)}px`);
   node.style.setProperty('--y', `${gap + Math.floor(index / 4) * (size + gap)}px`);
 }
-function tile(value, index, animation = '') {
+function tile(value, index, layout, animation = '') {
   const node = document.createElement('div');
   node.className = `tile ${animation}`;
   node.dataset.value = value;
   node.dataset.digits = String(value).length;
   node.innerHTML = `<strong>${value}</strong>`;
-  setPosition(node, index);
+  setPosition(node, index, layout);
   return node;
 }
-function render({ merged = [], spawned = -1 } = {}) {
-  tilesEl.replaceChildren(...state.board.flatMap((value, index) => value ? [tile(value, index, index === spawned ? 'new' : merged.includes(index) ? 'pop' : '')] : []));
-  scoreEl.textContent = String(state.score);
-  bestEl.textContent = String(state.best);
+function updateSoundButton() {
   soundButton.textContent = state.sound ? '♫  声音 · 开' : '♩  声音 · 关';
   soundButton.setAttribute('aria-pressed', String(state.sound));
+}
+function render({ merged = [], spawned = -1 } = {}) {
+  const layout = metrics();
+  tilesEl.replaceChildren(...state.board.flatMap((value, index) => value ? [tile(value, index, layout, index === spawned ? 'new' : merged.includes(index) ? 'pop' : '')] : []));
+  scoreEl.textContent = String(state.score);
+  bestEl.textContent = String(state.best);
+  updateSoundButton();
 }
 function showEnd(won, sound) {
   if (endShown || endDialog.open || document.hidden) return;
@@ -83,20 +87,25 @@ function showEnd(won, sound) {
   if (won && sound) playEnd();
 }
 function doMove(direction) {
-  if (busy || restartDialog.open || endDialog.open || state.board.includes(LIMIT) || isLost(state.board)) return;
+  if (restartDialog.open || endDialog.open || state.board.includes(LIMIT) || isLost(state.board)) {
+    pendingDirection = null;
+    return;
+  }
+  if (busy) { pendingDirection = direction; return; }
   const turn = move(state.board, direction);
   if (!turn.changed) return;
   busy = true;
-  const moving = turn.paths.map(path => tile(path.value, path.from));
+  const currentTurn = ++turnId;
+  if (turn.gained > 0) playMerge();
+  const layout = metrics();
+  const moving = turn.paths.map(path => tile(path.value, path.from, layout, 'moving'));
   tilesEl.replaceChildren(...moving);
-  requestAnimationFrame(() => requestAnimationFrame(() => turn.paths.forEach((path, i) => setPosition(moving[i], path.to))));
-  const delay = reduceMotion.matches ? 0 : 150;
-  window.setTimeout(() => {
+  const finishSlide = () => {
+    if (currentTurn !== turnId) return;
     state.board = turn.board;
     state.score += turn.gained;
     state.best = Math.max(state.best, state.score);
     if (turn.gained > 0) {
-      playMerge();
       const fly = $('#score-fly'); fly.textContent = `+${turn.gained}`;
       fly.classList.remove('fly'); void fly.offsetWidth; fly.classList.add('fly');
     }
@@ -109,13 +118,28 @@ function doMove(direction) {
     }
     save();
     render({ merged: turn.merged, spawned });
-    busy = false;
-    if (won || isLost(state.board)) window.setTimeout(() => showEnd(won, won), reduceMotion.matches ? 0 : 180);
-    else status.textContent = turn.gained ? `合成得分 ${turn.gained}，当前得分 ${state.score}` : `当前得分 ${state.score}`;
-  }, delay);
+    const lost = isLost(state.board);
+    if (won || lost) pendingDirection = null;
+    status.textContent = turn.gained ? `合成得分 ${turn.gained}，当前得分 ${state.score}` : `当前得分 ${state.score}`;
+    window.setTimeout(() => {
+      if (currentTurn !== turnId) return;
+      busy = false;
+      if (won || lost) showEnd(won, won);
+      else if (pendingDirection) {
+        const next = pendingDirection;
+        pendingDirection = null;
+        doMove(next);
+      }
+    }, reduceMotion.matches ? 0 : 180);
+  };
+  if (reduceMotion.matches) { finishSlide(); return; }
+  moving[0].getBoundingClientRect();
+  turn.paths.forEach((path, i) => setPosition(moving[i], path.to, layout));
+  window.setTimeout(finishSlide, 140);
 }
 function reset() {
   stopAudio();
+  turnId++; pendingDirection = null;
   restartDialog.close(); endDialog.close(); endShown = false; busy = false;
   state.board = newGame(); state.score = 0;
   save(); render(); boardEl.focus(); status.textContent = '新的一局开始了';
@@ -141,10 +165,10 @@ window.addEventListener('keydown', event => {
 });
 window.addEventListener('resize', () => { if (!busy) render(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) stopAudio();
+  if (document.hidden) { pendingDirection = null; stopAudio(); }
   else if ((state.board.includes(LIMIT) || isLost(state.board)) && !endShown) showEnd(state.board.includes(LIMIT), false);
 });
-soundButton.addEventListener('click', () => { state.sound = !state.sound; if (!state.sound) stopAudio(); save(); render(); });
+soundButton.addEventListener('click', () => { state.sound = !state.sound; if (!state.sound) stopAudio(); save(); updateSoundButton(); });
 $('#restart').addEventListener('click', () => { if (!busy) restartDialog.showModal(); });
 $('#cancel-restart').addEventListener('click', () => restartDialog.close());
 $('#confirm-restart').addEventListener('click', reset);
